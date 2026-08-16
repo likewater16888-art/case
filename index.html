@@ -1,0 +1,885 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no" />
+<meta name="description" content="霓虹贪吃蛇 · 纯原生 Canvas + Vanilla JS 实现的霓虹风格贪吃蛇游戏" />
+<title>霓虹贪吃蛇 · Neon Snake</title>
+<style>
+/* ==========================================================
+   全局样式：深色霓虹主题（CSS3，无任何框架）
+   ========================================================== */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+  --bg: #05070f;
+  --panel: rgba(10, 18, 34, 0.88);
+  --neon: #00ffc8;
+  --text: #dff6ff;
+  --text-dim: #5b7a9a;
+  --border: rgba(0, 255, 200, 0.22);
+}
+
+html, body { height: 100%; }
+
+body {
+  background:
+    radial-gradient(900px 600px at 50% -10%, #0d1e33 0%, transparent 60%),
+    radial-gradient(700px 500px at 85% 110%, rgba(255, 47, 214, 0.08) 0%, transparent 55%),
+    var(--bg);
+  color: var(--text);
+  font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+  display: flex;
+  overflow: auto;                       /* 内容超高时可滚动（横屏手机） */
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+}
+
+#app {
+  margin: auto;                         /* 弹性居中，同时避免溢出裁切 */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 14px;
+}
+
+/* ---------- HUD ---------- */
+#hud {
+  width: min(92vw, 480px);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 14px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: 0 0 18px rgba(0, 255, 200, 0.12), inset 0 0 20px rgba(0, 255, 200, 0.05);
+}
+.stat { display: flex; flex-direction: column; align-items: center; min-width: 54px; }
+.stat .label { font-size: 11px; letter-spacing: 3px; color: var(--text-dim); }
+.stat .value {
+  font-size: 22px; font-weight: 800;
+  color: var(--neon);
+  text-shadow: 0 0 10px rgba(0, 255, 200, 0.6);
+}
+#pauseBtn {
+  width: 42px; height: 42px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: rgba(0, 255, 200, 0.08);
+  color: var(--neon);
+  font-size: 18px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+#pauseBtn:hover { background: rgba(0, 255, 200, 0.2); }
+
+/* ---------- 游戏画布 ---------- */
+#game-wrap {
+  position: relative;
+  width: min(92vw, 56vh);
+  aspect-ratio: 1 / 1;                  /* 棋盘为正方形 20×20 */
+  border-radius: 18px;
+  overflow: hidden;
+  border: 1px solid rgba(0, 255, 200, 0.25);
+  box-shadow: 0 0 40px rgba(0, 255, 200, 0.15), 0 0 80px rgba(255, 47, 214, 0.08);
+  touch-action: none;                   /* 手势全部交给游戏逻辑 */
+}
+#game-wrap canvas { display: block; width: 100%; height: 100%; }
+
+/* ---------- 虚拟方向键（仅触屏设备显示） ---------- */
+#dpad {
+  display: none;
+  grid-template-columns: repeat(3, 52px);
+  grid-template-rows: repeat(3, 52px);
+  gap: 6px;
+}
+@media (hover: none) and (pointer: coarse) { #dpad { display: grid; } }
+.dkey {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(10, 22, 40, 0.9);
+  color: var(--neon);
+  font-size: 20px;
+  display: flex; align-items: center; justify-content: center;
+  touch-action: none;
+}
+.dkey:active {
+  background: rgba(0, 255, 200, 0.25);
+  box-shadow: 0 0 14px rgba(0, 255, 200, 0.5);
+}
+.dkey.up    { grid-column: 2; grid-row: 1; }
+.dkey.left  { grid-column: 1; grid-row: 2; }
+.dkey.right { grid-column: 3; grid-row: 2; }
+.dkey.down  { grid-column: 2; grid-row: 3; }
+
+/* ---------- 底部提示 ---------- */
+#tips { font-size: 12px; color: var(--text-dim); letter-spacing: 1px; text-align: center; }
+.tip-mobile { display: none; }
+@media (hover: none) and (pointer: coarse) {
+  .tip-desktop { display: none; }
+  .tip-mobile  { display: inline; }
+}
+</style>
+<body>
+<div id="app">
+
+  <!-- ===== HUD：得分 / 最高分 / 速度 / 暂停按钮 ===== -->
+  <header id="hud">
+    <div class="stat"><span class="label">得分</span><span class="value" id="score">0</span></div>
+    <div class="stat"><span class="label">最高</span><span class="value" id="best">0</span></div>
+    <div class="stat"><span class="label">速度</span><span class="value" id="speed">1.0×</span></div>
+    <button id="pauseBtn" type="button" title="暂停 / 继续（空格键）">▶</button>
+  </header>
+
+  <!-- ===== 游戏画布（所有游戏画面均在 Canvas 内绘制） ===== -->
+  <main id="game-wrap">
+    <canvas id="game"></canvas>
+  </main>
+
+  <!-- ===== 虚拟方向键（移动端） ===== -->
+  <nav id="dpad" aria-label="方向控制">
+    <button class="dkey up"    data-dir="up"    type="button" aria-label="上">▲</button>
+    <button class="dkey left"  data-dir="left"  type="button" aria-label="左">◀</button>
+    <button class="dkey right" data-dir="right" type="button" aria-label="右">▶</button>
+    <button class="dkey down"  data-dir="down"  type="button" aria-label="下">▼</button>
+  </nav>
+
+  <footer id="tips">
+    <span class="tip-desktop">方向键 / WASD 移动 · 空格 暂停/开始 · Enter 开始</span>
+    <span class="tip-mobile">滑动屏幕或点击方向键控制 · 顶部按钮可暂停</span>
+  </footer>
+</div>
+
+<script>
+'use strict';
+
+/* ============================================================
+ * 霓虹贪吃蛇 · Neon Snake
+ * 技术要点：
+ *   1) requestAnimationFrame 驱动主循环，逻辑(update)与渲染(render)分离
+ *   2) 固定步长(tick)推进 + 帧间线性插值(lerp) → 平滑滑动而非格子跳跃
+ *   3) 状态机：MENU / PLAYING / PAUSED / GAME_OVER
+ *   4) 碰撞检测基于网格坐标：撞墙 + 撞自身（Set 加速查重）
+ * ============================================================ */
+
+(() => {
+/* ---------- 1. 常量配置 ---------- */
+const COLS = 20;                  // 逻辑网格列数
+const ROWS = 20;                  // 逻辑网格行数
+const INIT_TICK = 130;            // 初始移动间隔（ms/格）
+const MIN_TICK  = 60;             // 最快移动间隔（ms/格）
+const SPEEDUP_PER_FOOD = 4;       // 每吃一个食物提速的毫秒数
+const TOUCH_THRESHOLD = 24;       // 触控滑动判定阈值（px）
+const FONT_STACK = '"Segoe UI","PingFang SC","Microsoft YaHei","Helvetica Neue",Arial,sans-serif';
+
+/* 游戏状态（状态机） */
+const STATE = Object.freeze({
+  MENU: 'MENU',            // 开始界面
+  PLAYING: 'PLAYING',      // 游戏中
+  PAUSED: 'PAUSED',        // 暂停
+  GAME_OVER: 'GAME_OVER',  // 结束界面
+});
+
+/* 四方向向量 */
+const DIR = Object.freeze({
+  UP:    { x: 0, y: -1 },
+  DOWN:  { x: 0, y: 1 },
+  LEFT:  { x: -1, y: 0 },
+  RIGHT: { x: 1, y: 0 },
+});
+
+const BEST_KEY = 'neon_snake_best_v1';   // localStorage 最高分键名
+
+/* ---------- 2. DOM 引用 ---------- */
+const canvas   = document.getElementById('game');
+const ctx      = canvas.getContext('2d');
+const wrap     = document.getElementById('game-wrap');
+const scoreEl  = document.getElementById('score');
+const bestEl   = document.getElementById('best');
+const speedEl  = document.getElementById('speed');
+const pauseBtn = document.getElementById('pauseBtn');
+/* ---------- 3. 全局游戏状态 ---------- */
+let state = STATE.MENU;      // 当前状态
+let won = false;             // 是否胜利（占满全屏）
+
+let snake = [];              // 蛇身：{x,y} 网格坐标数组，[0] 为蛇头
+let prevSnake = [];          // 上一 tick 的蛇身（用于帧间插值）
+let direction = DIR.RIGHT;   // 当前移动方向
+let dirQueue = [];           // 输入缓冲队列（快速连按不丢操作）
+let growPending = false;     // 本 tick 是否增长蛇身
+let food = null;             // 食物网格坐标 {x,y}
+let score = 0;               // 当前得分
+let best = loadBest();       // 最高分（localStorage）
+
+let particles = [];          // 粒子特效数组
+let shockwaves = [];         // 冲击波（扩散圆环）数组
+
+let moveTimer = 0;           // 逻辑步长计时器
+let tickMs = INIT_TICK;      // 当前移动间隔
+let animTime = 0;            // 全局动画时钟（呼吸、旋转光点等）
+let lastFrame = 0;           // 上一帧时间戳
+
+/* ---------- 画布布局（DPR 适配，单位为 CSS 像素） ---------- */
+let cssW = 0, cssH = 0, dpr = 1;
+let cell = 0;                // 单格像素尺寸
+let boardX = 0, boardY = 0;  // 棋盘在画布中的居中偏移
+/* ---------- 4. 工具函数 ---------- */
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const lerp  = (a, b, t) => a + (b - a) * t;
+const rand  = (a, b) => a + Math.random() * (b - a);
+const keyOf = p => p.x + ',' + p.y;
+
+/* ---------- 5. localStorage 最高分持久化 ---------- */
+function loadBest() {
+  try {
+    return Number(localStorage.getItem(BEST_KEY)) || 0;
+  } catch (e) {
+    return 0; // 隐私模式/禁用存储等异常容错
+  }
+}
+function saveBest() {
+  try {
+    if (score > best) {
+      best = score;
+      localStorage.setItem(BEST_KEY, String(best));
+    }
+  } catch (e) { /* 忽略存储失败，不影响游戏 */ }
+}
+
+/* ---------- 6. 画布尺寸 / DPR 适配 ---------- */
+function resize() {
+  const rect = wrap.getBoundingClientRect();
+  dpr  = Math.min(window.devicePixelRatio || 1, 2);   // 限制 DPR，保证移动端性能
+  cssW = Math.max(rect.width, 1);
+  cssH = Math.max(rect.height, 1);
+  canvas.width  = Math.round(cssW * dpr);
+  canvas.height = Math.round(cssH * dpr);
+  cell   = Math.max(1, Math.floor(Math.min(cssW / COLS, cssH / ROWS)));
+  boardX = Math.floor((cssW - cell * COLS) / 2);
+  boardY = Math.floor((cssH - cell * ROWS) / 2);
+}
+
+/* ---------- 7. 输入管理：键盘 / 触控 / 虚拟方向键 ---------- */
+function enqueueDirection(d) {
+  if (state !== STATE.PLAYING) return;
+  if (d.x === -direction.x && d.y === -direction.y) return; // 禁止 180° 掉头
+  const last = dirQueue[dirQueue.length - 1];
+  if (last && last.x === d.x && last.y === d.y) return;     // 与队尾重复则忽略
+  if (dirQueue.length >= 3) return;                         // 最多缓冲 3 步
+  dirQueue.push(d);
+}
+
+function handleKeyDown(e) {
+  const k = e.key;
+  const map = {
+    ArrowUp: DIR.UP,        w: DIR.UP,    W: DIR.UP,
+    ArrowDown: DIR.DOWN,    s: DIR.DOWN,  S: DIR.DOWN,
+    ArrowLeft: DIR.LEFT,    a: DIR.LEFT,  A: DIR.LEFT,
+    ArrowRight: DIR.RIGHT,  d: DIR.RIGHT, D: DIR.RIGHT,
+  };
+  if (map[k]) {
+    e.preventDefault();          // 阻止方向键滚动页面
+    enqueueDirection(map[k]);
+    return;
+  }
+  if (k === ' ' || k === 'Spacebar') {
+    e.preventDefault();
+    if (!e.repeat) togglePauseOrStart();
+    return;
+  }
+  if (k === 'Enter') {
+    e.preventDefault();
+    if (!e.repeat && (state === STATE.MENU || state === STATE.GAME_OVER)) startGame();
+    return;
+  }
+  if (k === 'p' || k === 'P') {
+    if (!e.repeat) togglePause();
+  }
+}
+
+/* 空格：开始 / 暂停切换 */
+function togglePauseOrStart() {
+  if (state === STATE.PLAYING) togglePause(true);
+  else if (state === STATE.PAUSED) togglePause(false);
+  else startGame();
+}
+
+/* 暂停 / 继续 */
+function togglePause(paused) {
+  if (state === STATE.PLAYING && paused !== false) {
+    state = STATE.PAUSED;
+  } else if (state === STATE.PAUSED && paused !== true) {
+    state = STATE.PLAYING;
+    lastFrame = performance.now();   // 重置帧时钟，防止恢复后 dt 突跳
+  }
+  updatePauseBtn();
+}
+
+/* 触控滑动 */
+let touchStart = null;
+function handleTouchStart(e) {
+  if (state === STATE.MENU || state === STATE.GAME_OVER) startGame(); // 点击即开始
+  const t = e.changedTouches[0];
+  touchStart = { x: t.clientX, y: t.clientY, id: t.identifier };
+}
+function handleTouchMove(e) {
+  if (!touchStart) return;
+  const t = Array.from(e.changedTouches).find(c => c.identifier === touchStart.id);
+  if (!t) return;
+  const dx = t.clientX - touchStart.x;
+  const dy = t.clientY - touchStart.y;
+  if (Math.abs(dx) < TOUCH_THRESHOLD && Math.abs(dy) < TOUCH_THRESHOLD) return;
+  const d = Math.abs(dx) > Math.abs(dy)
+    ? (dx > 0 ? DIR.RIGHT : DIR.LEFT)
+    : (dy > 0 ? DIR.DOWN : DIR.UP);
+  enqueueDirection(d);
+  touchStart = { x: t.clientX, y: t.clientY, id: t.identifier }; // 支持连续滑动
+}
+function handleTouchEnd() { touchStart = null; }
+
+/* 虚拟方向键 */
+function bindDpad() {
+  document.querySelectorAll('.dkey').forEach(btn => {
+    const d = DIR[btn.dataset.dir.toUpperCase()];
+    btn.addEventListener('pointerdown', ev => {
+      ev.preventDefault();
+      enqueueDirection(d);
+    });
+  });
+}
+/* ---------- 8. 游戏核心逻辑 ---------- */
+function startGame() {
+  // 蛇初始长度 3，位于棋盘中部，向右移动
+  snake = [
+    { x: 4, y: 10 },
+    { x: 3, y: 10 },
+    { x: 2, y: 10 },
+  ];
+  prevSnake = snake.map(p => ({ ...p }));
+  direction = DIR.RIGHT;
+  dirQueue = [];
+  growPending = false;
+  won = false;
+  score = 0;
+  tickMs = INIT_TICK;
+  moveTimer = 0;
+  particles = [];
+  shockwaves = [];
+  spawnFood();
+  state = STATE.PLAYING;
+  lastFrame = performance.now();
+  updateHUD();
+  updatePauseBtn();
+}
+
+/* 生成食物：在所有空格子中随机取一个（确定性算法，无需随机重试） */
+function spawnFood() {
+  const occupied = new Set(snake.map(keyOf));
+  const free = [];
+  for (let y = 0; y < ROWS; y++) {
+    for (let x = 0; x < COLS; x++) {
+      if (!occupied.has(x + ',' + y)) free.push({ x, y });
+    }
+  }
+  if (free.length === 0) {
+    food = null;
+    gameOver(true);   // 蛇占满全屏 → 胜利
+    return;
+  }
+  food = free[(Math.random() * free.length) | 0];
+}
+
+/* 单步推进：方向应用 + 碰撞检测 + 移动 + 进食 */
+function step() {
+  // 1) 从缓冲队列取出下一个合法方向
+  while (dirQueue.length) {
+    const d = dirQueue.shift();
+    if (d.x !== -direction.x || d.y !== -direction.y) { direction = d; break; }
+  }
+
+  // 2) 记录当前蛇身，用于帧间插值（增长时新蛇尾原地等待）
+  prevSnake = snake.map(p => ({ ...p }));
+  if (growPending) prevSnake.push({ ...snake[snake.length - 1] });
+
+  // 3) 计算新蛇头位置
+  const head = { x: snake[0].x + direction.x, y: snake[0].y + direction.y };
+
+  // 4) 碰撞检测
+  // 4.1 撞墙
+  if (head.x < 0 || head.x >= COLS || head.y < 0 || head.y >= ROWS) {
+    gameOver(false);
+    return;
+  }
+  // 4.2 撞自身（未增长时蛇尾会移走，允许蛇头滑入蛇尾格子）
+  const body = growPending ? snake : snake.slice(0, -1);
+  const occupied = new Set(body.map(keyOf));
+  if (occupied.has(keyOf(head))) {
+    gameOver(false);
+    return;
+  }
+
+  // 5) 蛇头前进一格
+  snake.unshift(head);
+
+  // 6) 进食判断
+  if (food && head.x === food.x && head.y === food.y) {
+    score += 1;
+    growPending = true;                                   // 本 tick 不删蛇尾 → 变长
+    tickMs = Math.max(MIN_TICK, INIT_TICK - score * SPEEDUP_PER_FOOD);
+    const fx = boardX + (food.x + 0.5) * cell;
+    const fy = boardY + (food.y + 0.5) * cell;
+    spawnBurst(fx, fy, 16, false);                        // 粒子爆炸
+    shockwaves.push({ x: fx, y: fy, r: cell * 0.4, life: 1 }); // 扩散圆环
+    saveBest();
+    spawnFood();                                          // 生成新食物
+  }
+
+  // 7) 不增长则移除蛇尾
+  if (growPending) growPending = false;
+  else snake.pop();
+
+  updateHUD();
+}
+
+/* 游戏结束（失败或胜利） */
+function gameOver(isWin) {
+  won = isWin;
+  saveBest();
+  state = STATE.GAME_OVER;
+  // 蛇头位置爆裂粒子特效
+  if (snake.length) {
+    const h = snake[0];
+    spawnBurst(
+      boardX + (h.x + 0.5) * cell,
+      boardY + (h.y + 0.5) * cell,
+      isWin ? 0 : 26,
+      isWin
+    );
+  }
+  updateHUD();
+  updatePauseBtn();
+}
+
+/* ---------- 9. 粒子系统 ---------- */
+function spawnBurst(x, y, count, isDeath) {
+  const palette = isDeath
+    ? ['#ff2fd6', '#ff5f9e', '#ffd166', '#ffffff']
+    : ['#00ffc8', '#7dffd9', '#a5f3ff', '#ffffff'];
+  for (let i = 0; i < count; i++) {
+    const angle = rand(0, Math.PI * 2);
+    const speed = rand(40, 180) * (isDeath ? 1.4 : 1);
+    particles.push({
+      x, y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      size: rand(2, 5),
+      life: 1,                       // 1 → 0 递减
+      decay: rand(0.7, 1.4),         // 每秒衰减速度
+      color: palette[(Math.random() * palette.length) | 0],
+    });
+  }
+}
+
+/* 每帧更新粒子（dt 单位为秒） */
+function updateParticles(dtSec) {
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.life -= p.decay * dtSec;
+    if (p.life <= 0) { particles.splice(i, 1); continue; }
+    p.x += p.vx * dtSec;
+    p.y += p.vy * dtSec;
+    p.vx *= 0.98;   // 轻微空气阻力
+    p.vy *= 0.98;
+  }
+  for (let i = shockwaves.length - 1; i >= 0; i--) {
+    const s = shockwaves[i];
+    s.life -= 1.6 * dtSec;
+    s.r += cell * 6 * dtSec;
+    if (s.life <= 0) shockwaves.splice(i, 1);
+  }
+}
+/* ---------- 10. 渲染 ---------- */
+function render() {
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  drawBackground();
+  drawFood();
+  drawSnake();
+  drawParticles();
+  drawOverlay();
+}
+
+/* 圆角矩形路径工具（兼容不支持原生 roundRect 的浏览器） */
+function roundRect(x, y, w, h, r) {
+  const rr = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + rr, y);
+  ctx.arcTo(x + w, y, x + w, y + h, rr);
+  ctx.arcTo(x + w, y + h, x, y + h, rr);
+  ctx.arcTo(x, y + h, x, y, rr);
+  ctx.arcTo(x, y, x + w, y, rr);
+  ctx.closePath();
+}
+
+/* 背景：深色底 + 网格线 + 霓虹边框 */
+function drawBackground() {
+  ctx.fillStyle = '#070b16';
+  ctx.fillRect(0, 0, cssW, cssH);
+
+  // 棋盘底色（径向渐变）
+  const bx = boardX, by = boardY, bw = cell * COLS, bh = cell * ROWS;
+  roundRect(bx, by, bw, bh, 10);
+  const bg = ctx.createRadialGradient(
+    bx + bw / 2, by + bh / 2, 0, bx + bw / 2, by + bh / 2, bw * 0.7
+  );
+  bg.addColorStop(0, '#0a1424');
+  bg.addColorStop(1, '#060b16');
+  ctx.fillStyle = bg;
+  ctx.fill();
+
+  // 网格线
+  ctx.save();
+  ctx.strokeStyle = 'rgba(0, 255, 200, 0.05)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (let x = 1; x < COLS; x++) {
+    ctx.moveTo(bx + x * cell + 0.5, by);
+    ctx.lineTo(bx + x * cell + 0.5, by + bh);
+  }
+  for (let y = 1; y < ROWS; y++) {
+    ctx.moveTo(bx, by + y * cell + 0.5);
+    ctx.lineTo(bx + bw, by + y * cell + 0.5);
+  }
+  ctx.stroke();
+  ctx.restore();
+
+  // 霓虹边框
+  ctx.save();
+  roundRect(bx, by, bw, bh, 10);
+  ctx.strokeStyle = 'rgba(0, 255, 200, 0.5)';
+  ctx.lineWidth = 2;
+  ctx.shadowColor = '#00ffc8';
+  ctx.shadowBlur = 14;
+  ctx.stroke();
+  ctx.restore();
+}
+
+/* 食物：呼吸缩放 + 霓虹光晕 + 环绕光点 */
+function drawFood() {
+  if (!food) return;
+  const px = boardX + (food.x + 0.5) * cell;
+  const py = boardY + (food.y + 0.5) * cell;
+  const pulse = 1 + Math.sin(animTime * 0.006) * 0.12;
+  const r = Math.max(cell * 0.28 * pulse, 3);
+
+  // 外发光主体
+  ctx.save();
+  ctx.shadowColor = '#00ffc8';
+  ctx.shadowBlur = 22;
+  ctx.fillStyle = '#00ffc8';
+  ctx.beginPath();
+  ctx.arc(px, py, r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+
+  // 高亮内核
+  ctx.save();
+  ctx.fillStyle = '#d9fff6';
+  ctx.beginPath();
+  ctx.arc(px, py, r * 0.45, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+
+  // 环绕旋转光点
+  ctx.save();
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.55)';
+  for (let i = 0; i < 3; i++) {
+    const a = animTime * 0.002 + (i * Math.PI * 2) / 3;
+    const orbR = r + 6 + Math.sin(animTime * 0.005 + i) * 3;
+    ctx.beginPath();
+    ctx.arc(px + Math.cos(a) * orbR, py + Math.sin(a) * orbR, 2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+/* 蛇：连续霓虹管状路径 + 帧间插值平滑滑动 + 头尾渐变配色 */
+function drawSnake() {
+  if (!snake.length) return;
+  const progress = moveTimer / tickMs;   // 0(刚移动) → 1(下次移动前)
+
+  // 逐段插值出像素坐标
+  const pts = [];
+  for (let i = 0; i < snake.length; i++) {
+    const prev = prevSnake[i] || snake[i];   // 长度不一致时回退
+    const cur = snake[i];
+    pts.push({
+      x: boardX + (lerp(prev.x, cur.x, progress) + 0.5) * cell,
+      y: boardY + (lerp(prev.y, cur.y, progress) + 0.5) * cell,
+    });
+  }
+
+  const head = pts[0];
+  const tail = pts[pts.length - 1];
+  const lineW = Math.max(cell * 0.62, 6);
+
+  // 身体渐变：头(亮绿) → 尾(粉紫)
+  const grad = ctx.createLinearGradient(head.x, head.y, tail.x, tail.y);
+  grad.addColorStop(0, '#7dffb0');
+  grad.addColorStop(0.45, '#00ffc8');
+  grad.addColorStop(1, '#ff2fd6');
+
+  ctx.save();
+  // 第一遍：带外发光的霓虹管
+  ctx.shadowColor = 'rgba(0, 255, 200, 0.8)';
+  ctx.shadowBlur = 18;
+  drawSnakePath(pts, lineW, grad);
+  ctx.shadowBlur = 0;
+  // 第二遍：高亮内芯（灯管效果）
+  drawSnakePath(pts, lineW * 0.42, 'rgba(230, 255, 250, 0.85)');
+  ctx.restore();
+
+  drawSnakeHead(head, lineW);
+}
+
+function drawSnakePath(pts, width, style) {
+  ctx.strokeStyle = style;
+  ctx.lineWidth = width;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.beginPath();
+  ctx.moveTo(pts[0].x, pts[0].y);
+  for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+  ctx.stroke();
+}
+
+/* 蛇头：亮色圆头 + 朝向眼睛 */
+function drawSnakeHead(head, lineW) {
+  const r = lineW * 0.78;
+  ctx.save();
+  ctx.shadowColor = '#7dffb0';
+  ctx.shadowBlur = 20;
+  ctx.fillStyle = '#b8ffd9';
+  ctx.beginPath();
+  ctx.arc(head.x, head.y, r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+
+  // 眼睛沿移动方向前移、垂直方向分开
+  const eyeR = Math.max(lineW * 0.2, 2.5);
+  const fx = direction.x * r * 0.42, fy = direction.y * r * 0.42;
+  const sx = -direction.y * r * 0.5, sy = direction.x * r * 0.5;
+  ctx.save();
+  ctx.fillStyle = '#0a0f1e';
+  ctx.beginPath();
+  ctx.arc(head.x + fx + sx, head.y + fy + sy, eyeR, 0, Math.PI * 2);
+  ctx.arc(head.x + fx - sx, head.y + fy - sy, eyeR, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+/* 粒子 + 冲击波 */
+function drawParticles() {
+  for (const p of particles) {
+    ctx.save();
+    ctx.globalAlpha = Math.max(p.life, 0);
+    ctx.fillStyle = p.color;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size * Math.max(p.life, 0) + 0.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+  for (const s of shockwaves) {
+    ctx.save();
+    ctx.globalAlpha = Math.max(s.life, 0) * 0.7;
+    ctx.strokeStyle = '#00ffc8';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+/* 霓虹文字 */
+function drawNeonText(text, x, y, size, color, glow) {
+  ctx.save();
+  ctx.font = '900 ' + size + 'px ' + FONT_STACK;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.shadowColor = glow;
+  ctx.shadowBlur = size * 0.5;
+  ctx.fillStyle = color;
+  ctx.fillText(text, x, y);
+  ctx.restore();
+}
+
+/* 状态遮罩层：开始界面 / 暂停 / 结束界面 */
+function drawOverlay() {
+  if (state === STATE.PLAYING) return;
+  const cx = cssW / 2, cy = cssH / 2;
+
+  // 半透明遮罩
+  ctx.fillStyle = 'rgba(3, 7, 15, 0.72)';
+  ctx.fillRect(0, 0, cssW, cssH);
+
+  // 中央面板
+  const pw = Math.min(cssW * 0.8, 420);
+  const ph = Math.min(cssH * 0.62, 320);
+  ctx.save();
+  roundRect(cx - pw / 2, cy - ph / 2, pw, ph, 18);
+  ctx.fillStyle = 'rgba(10, 18, 34, 0.92)';
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(0, 255, 200, 0.35)';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+  ctx.restore();
+
+  // 副文字工具：统一字体/颜色
+  const sub = size => {
+    ctx.save();
+    ctx.font = '500 ' + size + 'px ' + FONT_STACK;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#8fb8d8';
+    return ctx;
+  };
+
+  if (state === STATE.MENU) {
+    drawNeonText('霓虹贪吃蛇', cx, cy - ph * 0.30, Math.max(34, cell * 1.2), '#d9fff6', '#00ffc8');
+    sub(Math.max(14, cell * 0.5)).fillText('方向键 / WASD 移动 · 空格 暂停', cx, cy - ph * 0.06);
+    sub(Math.max(14, cell * 0.5)).fillText('触屏设备请滑动屏幕或使用方向键', cx, cy + ph * 0.04);
+    drawNeonText('最高分 ' + best, cx, cy + ph * 0.22, Math.max(20, cell * 0.7), '#ffd166', '#ff9f2f');
+    drawNeonText('按 空格 / Enter 开始', cx, cy + ph * 0.38, Math.max(17, cell * 0.55), '#7dffb0', '#00ffc8');
+  } else if (state === STATE.PAUSED) {
+    drawNeonText('已暂停', cx, cy - ph * 0.10, Math.max(40, cell * 1.3), '#ffd166', '#ff9f2f');
+    sub(Math.max(15, cell * 0.55)).fillText('按 空格 或点击 ▶ 继续', cx, cy + ph * 0.14);
+  } else if (state === STATE.GAME_OVER) {
+    const title = won ? '🎉 你赢了！' : '游戏结束';
+    drawNeonText(
+      title, cx, cy - ph * 0.28, Math.max(36, cell * 1.2),
+      won ? '#ffd166' : '#ff5f9e',
+      won ? '#ff9f2f' : '#ff2fd6'
+    );
+    sub(Math.max(16, cell * 0.55)).fillText('本局得分  ' + score, cx, cy - ph * 0.05);
+    const isNew = score > 0 && score >= best;
+    sub(Math.max(16, cell * 0.55)).fillStyle = isNew ? '#ffd166' : '#8fb8d8';
+    sub(Math.max(16, cell * 0.55)).fillText(
+      '最高分  ' + best + (isNew ? '  ★ 新纪录' : ''),
+      cx, cy + ph * 0.08
+    );
+    drawNeonText('按 空格 / Enter 再来一局', cx, cy + ph * 0.28, Math.max(17, cell * 0.55), '#7dffb0', '#00ffc8');
+  }
+}
+
+/* ---------- 11. HUD 更新 ---------- */
+function updateHUD() {
+  scoreEl.textContent = score;
+  bestEl.textContent = best;
+  speedEl.textContent = (INIT_TICK / tickMs).toFixed(1) + '×';
+}
+function updatePauseBtn() {
+  pauseBtn.textContent = (state === STATE.PLAYING) ? '⏸' : '▶';
+}
+
+/* ---------- 12. 主循环：逻辑固定步长 + 每帧渲染 ---------- */
+function loop(now) {
+  requestAnimationFrame(loop);
+  let dt = now - lastFrame;
+  lastFrame = now;
+  dt = Math.min(dt, 100);          // 钳制：切后台/卡顿后防止逻辑暴走
+
+  if (state === STATE.PLAYING) {
+    moveTimer += dt;
+    while (moveTimer >= tickMs) {  // 一次可能追多步（低帧率环境保证公平）
+      moveTimer -= tickMs;
+      step();
+      if (state !== STATE.PLAYING) break;   // step 内可能触发 gameOver
+    }
+    if (state !== STATE.PLAYING) moveTimer = 0;
+  }
+
+  animTime += dt;
+  updateParticles(dt / 1000);
+  render();
+}
+/* ---------- 13. 事件绑定与初始化 ---------- */
+window.addEventListener('keydown', handleKeyDown);
+window.addEventListener('resize', resize);
+window.addEventListener('blur', () => { if (state === STATE.PLAYING) togglePause(true); });
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden && state === STATE.PLAYING) togglePause(true);
+});
+
+wrap.addEventListener('touchstart', handleTouchStart, { passive: true });
+wrap.addEventListener('touchmove', handleTouchMove, { passive: false });
+wrap.addEventListener('touchend', handleTouchEnd);
+
+pauseBtn.addEventListener('click', () => {
+  if (state === STATE.PLAYING) togglePause(true);
+  else if (state === STATE.PAUSED) togglePause(false);
+  else startGame();
+});
+
+bindDpad();
+
+/* 初始化：适配尺寸 + 刷新 HUD + 启动主循环 */
+function init() {
+  resize();
+  updateHUD();
+  updatePauseBtn();
+  requestAnimationFrame(loop);
+}
+init();
+
+})();
+</script>
+
+<!--
+==================================================================
+  如何扩展新功能（Extending Guide）
+==================================================================
+  以下列出常见扩展点的具体接入方式，所有改动均无需引入外部库：
+
+  1) 新增「障碍物」关卡
+     - 定义全局：let walls = [{x,y}, ...];
+     - 在 step() 的碰撞检测区（第 4.1 步撞墙判定之后）追加：
+         if (walls.some(w => w.x === head.x && w.y === head.y)) { gameOver(false); return; }
+     - 在 drawBackground() 末尾循环绘制障碍块即可。
+     - spawnFood() 已在"空格子"中随机生成，天然不会落在障碍上。
+
+  2) 新增「特殊食物 / 道具」（如双倍分、减速、穿墙）
+     - 参考现有 food 结构扩展一个 type 字段，例如 food = { x, y, type: 'gold' };
+     - 在 step() 的进食判断中按 type 分支处理（加分翻倍 / 改变 tickMs）；
+     - 在 drawFood() 中按 type 换颜色与形状。
+
+  3) 新增「音效」（WebAudio，无外部资源）
+     - 创建一个 AudioContext，写一个 playTone(freq, dur) 函数；
+     - 在 step() 进食分支调用播放"叮"音，在 gameOver() 播放低沉音。
+
+  4) 新增「AI 自动蛇」（演示模式）
+     - 写一个 aiDecide() 函数计算下一个合法方向（如 A* 寻路或
+       沿曼哈顿距离贪心），在每次 step() 的"1) 取方向"之前调用并
+       enqueueDirection 即可。
+
+  5) 新增「暂停菜单动画 / 设置面板」
+     - 状态机已预留 MENU/PAUSED/GAME_OVER 三个非游戏态；
+     - 可在 drawOverlay() 中继续扩展面板内容，或在 DOM 中新增
+       <div> 并通过 state 控制显隐（建议保留 Canvas 内绘制以保持
+       单文件架构）。
+
+  6) 调整难度曲线
+     - 修改 SPEEDUP_PER_FOOD / MIN_TICK 两个常量即可；
+     - 若需"每 N 个食物提速一档"，可将提速公式改写为按分数取整。
+
+  7) 排行榜 / 多存档
+     - loadBest()/saveBest() 已封装 localStorage 读写并带异常容错，
+       在此函数上扩展键名或 JSON 结构即可保存多局记录。
+==================================================================
+-->
+
+</body>
+</html>
